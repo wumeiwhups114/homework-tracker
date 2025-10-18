@@ -190,9 +190,12 @@
 
   <!-- Main App Script -->
   <script type="module">
+    // Import Firestore APIs at top-level so every function can use them
+    import { doc, onSnapshot, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
+  
     // Firebase init (from <head>)
     const { db } = await window.__firebaseInit();
-
+  
     // --- DOM ---
     const homeworkList         = document.getElementById('homework-list');
     const addHomeworkBtn       = document.getElementById('add-homework-btn');
@@ -201,48 +204,47 @@
     const cancelHomeworkBtn    = document.getElementById('cancel-homework');
     const modalTitle           = document.getElementById('modal-title');
     const noHomeworkMessage    = document.getElementById('no-homework-message');
-
+  
     const studentSelector      = document.getElementById('student-selector');
     const studentReportModal   = document.getElementById('student-report-modal');
     const studentReportTitle   = document.getElementById('student-report-title');
     const studentReportContent = document.getElementById('student-report-content');
     const exportStudentCsvBtn  = document.getElementById('export-student-csv-btn');
-
+  
     const showOverallReportBtn = document.getElementById('show-overall-report-btn');
     const overallReportModal   = document.getElementById('overall-report-modal');
     const exportOverallCsvBtn  = document.getElementById('export-overall-csv-btn');
-
+  
     const deleteConfirmModal   = document.getElementById('delete-confirm-modal');
     const cancelDeleteBtn      = document.getElementById('cancel-delete-btn');
     const confirmDeleteBtn     = document.getElementById('confirm-delete-btn');
-
+  
     // --- State (Firestore-backed) ---
     let homeworks = [];
     const studentIds = [1,2,3,5,6,7,8,9,10,11,12,21,22,23,24,25,26,27,28,29,30,31];
     let studentToExport = null;
     let homeworkToDelete = null;
-
-    // Class / semester key (change to separate classes)
+  
     const CLASS_DOC_ID = "502_114-1";
-
-    // --- Helpers ---
+  
+    // --- Utils ---
     const openModal  = (id) => document.getElementById(id).classList.remove('hidden');
     const closeModal = (id) => document.getElementById(id).classList.add('hidden');
-
+  
     const getStatusText = (status) => ({
       pending: '待繳交',
       submitted: '準時繳交',
       overdue: '逾期未交',
       late_submitted: '補交'
     }[status] || '未知');
-
+  
     const getStatusColor = (status) => ({
       pending: 'bg-yellow-500 hover:bg-yellow-600',
       submitted: 'bg-green-500 hover:bg-green-600',
       overdue: 'bg-red-500 hover:bg-red-600',
       late_submitted: 'bg-blue-500 hover:bg-blue-600'
     }[status] || 'bg-gray-500');
-
+  
     const downloadCSV = (csvContent, filename) => {
       const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
@@ -250,7 +252,7 @@
       link.href = url; link.download = filename; link.style.visibility = 'hidden';
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
     };
-
+  
     const checkOverdueStatus = () => {
       const today = new Date(); today.setHours(0,0,0,0);
       homeworks.forEach(hw => {
@@ -262,20 +264,16 @@
         }
       });
     };
-
+  
     // --- Rendering ---
     const render = () => {
       checkOverdueStatus();
       homeworkList.innerHTML = '';
-
-      if (homeworks.length === 0) {
-        noHomeworkMessage.classList.remove('hidden');
-      } else {
-        noHomeworkMessage.classList.add('hidden');
-      }
-
+      if (homeworks.length === 0) noHomeworkMessage.classList.remove('hidden');
+      else noHomeworkMessage.classList.add('hidden');
+  
       homeworks.sort((a,b) => new Date(b.dueDate) - new Date(a.dueDate));
-
+  
       homeworks.forEach(hw => {
         const card = document.createElement('div');
         card.className = 'bg-gray-800 rounded-lg shadow-lg p-5 flex flex-col';
@@ -315,24 +313,29 @@
           </div>`;
         homeworkList.appendChild(card);
       });
-
+  
       bindCardEvents();
     };
-
+  
     const bindCardEvents = () => {
       document.querySelectorAll('.edit-btn')       .forEach(btn => btn.addEventListener('click', handleEdit));
       document.querySelectorAll('.delete-btn')     .forEach(btn => btn.addEventListener('click', handleDelete));
       document.querySelectorAll('.student-dot')    .forEach(dot => dot.addEventListener('click', handleDotClick));
       document.querySelectorAll('.manual-due-btn') .forEach(btn => btn.addEventListener('click', handleManualDueDate));
     };
-
-    // --- Firestore Save ---
+  
+    // --- Firestore Save with error handling ---
     const saveState = async () => {
-      const ref = firebase.firestoreDocRef || null; // we’ll attach this in init()
-      if (!ref) return;
-      await setDoc(ref, { homeworks }, { merge: false });
+      try {
+        const ref = window.firebase?.firestoreDocRef || null;
+        if (!ref) throw new Error("Firestore ref not ready");
+        await setDoc(ref, { homeworks }, { merge: false });
+      } catch (err) {
+        console.error(err);
+        alert("儲存失敗：請檢查 Firebase 設定 / 規則 / 匿名登入是否啟用。");
+      }
     };
-
+  
     // --- Handlers ---
     const handleAdd = () => {
       modalTitle.textContent = '新增作業';
@@ -344,7 +347,7 @@
       document.getElementById('dueDate').value = today;
       openModal('homework-modal');
     };
-
+  
     const handleEdit = (e) => {
       const id = e.currentTarget.dataset.id;
       const hw = homeworks.find(h => h.id === id);
@@ -357,12 +360,12 @@
       document.getElementById('dueDate').value          = hw.dueDate;
       openModal('homework-modal');
     };
-
+  
     const handleDelete = (e) => {
       homeworkToDelete = e.currentTarget.dataset.id;
       openModal('delete-confirm-modal');
     };
-
+  
     const confirmDelete = async () => {
       homeworks = homeworks.filter(h => h.id !== homeworkToDelete);
       homeworkToDelete = null;
@@ -370,7 +373,7 @@
       render();
       closeModal('delete-confirm-modal');
     };
-
+  
     const handleSave = async (e) => {
       e.preventDefault();
       const id               = document.getElementById('homework-id').value;
@@ -378,9 +381,8 @@
       const assignmentDate   = document.getElementById('assignmentDate').value;
       const registrationDate = document.getElementById('registrationDate').value;
       const dueDate          = document.getElementById('dueDate').value;
-
       if (!title) return;
-
+  
       if (id) {
         const idx = homeworks.findIndex(h => h.id === id);
         if (idx > -1) {
@@ -398,12 +400,12 @@
       render();
       closeModal('homework-modal');
     };
-
+  
     const handleDotClick = async (e) => {
       const { hwId, sid } = e.currentTarget.dataset;
       const hw = homeworks.find(h => h.id === hwId);
       if (!hw) return;
-
+  
       const current = hw.submissions[sid];
       hw.submissions[sid] = ({
         pending: 'submitted',
@@ -411,11 +413,11 @@
         overdue: 'late_submitted',
         late_submitted: 'overdue'
       })[current] || 'pending';
-
+  
       await saveState();
       render();
     };
-
+  
     const handleManualDueDate = async (e) => {
       const id = e.currentTarget.dataset.id;
       const hw = homeworks.find(h => h.id === id);
@@ -426,125 +428,82 @@
       await saveState();
       render();
     };
-
-    const handleShowStudentReport = (e) => {
-      const studentId = e.target.value;
-      if (!studentId) return;
-      studentToExport = studentId;
-      studentReportTitle.textContent = `座號 ${studentId} 作業狀況總覽`;
-
-      let overdueItems = [];
-      let lateSubmittedItems = [];
-      homeworks.forEach(hw => {
-        const s = hw.submissions[studentId];
-        if (s === 'overdue')        overdueItems.push(hw);
-        else if (s === 'late_submitted') lateSubmittedItems.push(hw);
-      });
-
-      if (overdueItems.length === 0 && lateSubmittedItems.length === 0) {
-        studentReportContent.innerHTML = `<div class="text-center p-8"><p class="text-xl text-green-400 font-semibold">作業皆已繳交！</p></div>`;
-      } else {
-        let html = '';
-        if (overdueItems.length > 0) {
-          html += `<h4 class="text-lg font-semibold text-red-400 mb-2">逾期未交</h4>
-                   <ul class="list-disc list-inside space-y-1 mb-4">
-                     ${overdueItems.map(hw => `<li><span class="text-gray-400">${hw.assignmentDate}</span> - ${hw.title}</li>`).join('')}
-                   </ul>`;
-        }
-        if (lateSubmittedItems.length > 0) {
-          html += `<h4 class="text-lg font-semibold text-blue-400 mb-2">作業已補交</h4>
-                   <ul class="list-disc list-inside space-y-1">
-                     ${lateSubmittedItems.map(hw => `<li><span class="text-gray-400">${hw.assignmentDate}</span> - ${hw.title}</li>`).join('')}
-                   </ul>`;
-        }
-        studentReportContent.innerHTML = html;
-      }
-      openModal('student-report-modal');
-      studentSelector.value = '';
-    };
-
-    const handleExportStudentCSV = () => {
-      if (!studentToExport) return;
-      const sid = studentToExport;
-      const rows = ['作業標題,作業日期,截止日期,繳交狀態'];
-      homeworks.forEach(hw => {
-        const status = getStatusText(hw.submissions[sid]);
-        rows.push([hw.title.replace(/,/g,' '), hw.assignmentDate, hw.dueDate, status].join(','));
-      });
-      downloadCSV(rows.join('\n'), `student_${sid}_report.csv`);
-    };
-
-    const handleExportOverallCSV = () => {
-      const startDate = document.getElementById('start-date').value;
-      const endDate   = document.getElementById('end-date').value;
-
-      let filtered = homeworks;
-      if (startDate && endDate) {
-        const s = new Date(startDate), e = new Date(endDate);
-        filtered = homeworks.filter(hw => {
-          const d = new Date(hw.assignmentDate);
-          return d >= s && d <= e;
-        });
-      } else if (startDate) {
-        const s = new Date(startDate);
-        filtered = homeworks.filter(hw => new Date(hw.assignmentDate) >= s);
-      } else if (endDate) {
-        const e = new Date(endDate);
-        filtered = homeworks.filter(hw => new Date(hw.assignmentDate) <= e);
-      }
-
-      if (filtered.length === 0) {
-        alert('在選定的日期範圍內沒有作業可匯出。');
-        return;
-      }
-
-      const headers = ['作業標題','截止日期', ...studentIds];
-      const rows = [headers.join(',')];
-      filtered.forEach(hw => {
-        const row = [
-          hw.title.replace(/,/g,' '),
-          hw.dueDate,
-          ...studentIds.map(sid => getStatusText(hw.submissions[sid]))
-        ];
-        rows.push(row.join(','));
-      });
-      downloadCSV(rows.join('\n'), 'overall_homework_report.csv');
-      closeModal('overall-report-modal');
-    };
-
-    // --- Firestore live subscription + bootstrap ---
+  
+    // --- Init (subscribe + bind listeners) ---
     const init = async () => {
-      const { doc, onSnapshot, getDoc, setDoc } = await import("https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js");
       const ref = doc(db, "classes", CLASS_DOC_ID);
       window.firebase = window.firebase || {};
       window.firebase.firestoreDocRef = ref;
-
-      // Create if missing
+  
+      // Create the doc if it doesn't exist
       const snap = await getDoc(ref);
       if (!snap.exists()) await setDoc(ref, { homeworks: [] });
-
-      // Subscribe
+  
+      // Live updates
       onSnapshot(ref, (dSnap) => {
         const data = dSnap.data() || {};
         homeworks = Array.isArray(data.homeworks) ? data.homeworks : [];
         render();
       });
-
-      // Bind static UI events once
+  
+      // Bind static listeners once
       addHomeworkBtn.addEventListener('click', handleAdd);
       homeworkForm.addEventListener('submit', handleSave);
       cancelHomeworkBtn.addEventListener('click', () => closeModal('homework-modal'));
       studentSelector.addEventListener('change', handleShowStudentReport);
-      exportStudentCsvBtn.addEventListener('click', handleExportStudentCSV);
+      exportStudentCsvBtn.addEventListener('click', () => {
+        if (!studentToExport) return;
+        const sid = studentToExport;
+        const rows = ['作業標題,作業日期,截止日期,繳交狀態'];
+        homeworks.forEach(hw => {
+          const status = getStatusText(hw.submissions[sid]);
+          rows.push([hw.title.replace(/,/g,' '), hw.assignmentDate, hw.dueDate, status].join(','));
+        });
+        downloadCSV(rows.join('\n'), `student_${sid}_report.csv`);
+      });
       showOverallReportBtn.addEventListener('click', () => {
         document.getElementById('start-date').value = '';
         document.getElementById('end-date').value = '';
         openModal('overall-report-modal');
       });
-      exportOverallCsvBtn.addEventListener('click', handleExportOverallCSV);
-      cancelDeleteBtn.addEventListener('click', () => closeModal('delete-confirm-modal'));
-      confirmDeleteBtn.addEventListener('click', confirmDelete);
-
+      exportOverallCsvBtn.addEventListener('click', () => {
+        const startDate = document.getElementById('start-date').value;
+        const endDate   = document.getElementById('end-date').value;
+  
+        let filtered = homeworks;
+        if (startDate && endDate) {
+          const s = new Date(startDate), e = new Date(endDate);
+          filtered = homeworks.filter(hw => {
+            const d = new Date(hw.assignmentDate);
+            return d >= s && d <= e;
+          });
+        } else if (startDate) {
+          const s = new Date(startDate);
+          filtered = homeworks.filter(hw => new Date(hw.assignmentDate) >= s);
+        } else if (endDate) {
+          const e = new Date(endDate);
+          filtered = homeworks.filter(hw => new Date(hw.assignmentDate) <= e);
+        }
+  
+        if (filtered.length === 0) {
+          alert('在選定的日期範圍內沒有作業可匯出。');
+          return;
+        }
+  
+        const headers = ['作業標題','截止日期', ...studentIds];
+        const rows = [headers.join(',')];
+        filtered.forEach(hw => {
+          const row = [
+            hw.title.replace(/,/g,' '),
+            hw.dueDate,
+            ...studentIds.map(sid => getStatusText(hw.submissions[sid]))
+          ];
+          rows.push(row.join(','));
+        });
+        downloadCSV(rows.join('\n'), 'overall_homework_report.csv');
+        closeModal('overall-report-modal');
+      });
+  
       // Fill student selector
       studentIds.forEach(id => {
         const opt = document.createElement('option');
@@ -552,8 +511,10 @@
         studentSelector.appendChild(opt);
       });
     };
-
+  
     init();
   </script>
+
 </body>
 </html>
+
