@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>114-1 502作業繳交系統</title>
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet"/>
+
+  <style>
+    body { font-family: 'Inter', 'Noto Sans TC', sans-serif; }
+    html, body { overflow-x: hidden; } /* Avoid horizontal scroll on mobile */
+    .modal-backdrop { background-color: rgba(0,0,0,0.75); }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #2d3748; }
+    ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #718096; }
+  </style>
+
+  <!-- Firebase (loaded as ES modules) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+    import { getFirestore, doc, onSnapshot, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
+    import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+
+    // ←←← Replace these with your Firebase project values
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID"
+    };
+
+    // Expose an async initializer for the main script
+    window.__firebaseInit = async () => {
+      const app  = initializeApp(firebaseConfig);
+      const db   = getFirestore(app);
+      const auth = getAuth(app);
+      await signInAnonymously(auth);
+      return { db };
+    };
+  </script>
+</head>
+
+<body class="bg-gray-900 text-white antialiased">
+  <div id="app" class="container mx-auto p-4 md:p-6 lg:p-8 max-w-7xl">
+    <!-- Header -->
+    <header class="flex flex-col sm:flex-row justify-between items-center mb-6">
+      <h1 class="text-3xl font-bold text-cyan-400 mb-4 sm:mb-0">114-1 502作業繳交系統</h1>
+      <div class="flex items-center space-x-2">
+        <div class="relative">
+          <select id="student-selector" class="bg-gray-700 border border-gray-600 rounded-md py-2 pl-3 pr-8 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 appearance-none">
+            <option value="">查詢學生狀況</option>
+          </select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+            <svg class="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+          </div>
+        </div>
+        <button id="show-overall-report-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-md transition duration-300">
+          總覽與匯出
+        </button>
+      </div>
+    </header>
+
+    <!-- Legend -->
+    <div class="flex justify-center items-center flex-wrap gap-x-6 gap-y-2 text-sm text-gray-300 mb-6">
+      <span class="flex items-center">準時繳交：<span class="w-4 h-4 rounded-full bg-yellow-500 ml-2 mr-1"></span>→<span class="w-4 h-4 rounded-full bg-green-500 ml-1"></span></span>
+      <span class="flex items-center">缺交：<span class="w-4 h-4 rounded-full bg-red-500 ml-2"></span></span>
+      <span class="flex items-center">逾期補交：<span class="w-4 h-4 rounded-full bg-blue-500 ml-2"></span></span>
+    </div>
+
+    <!-- Cards -->
+    <main id="homework-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></main>
+
+    <div id="no-homework-message" class="text-center py-12 text-gray-500 hidden">
+      <svg class="mx-auto h-12 w-12 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+        <path vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+      </svg>
+      <h3 class="mt-2 text-sm font-medium text-gray-400">尚無作業</h3>
+      <p class="mt-1 text-sm text-gray-500">點擊右下角的 '+' 按鈕來新增第一份作業。</p>
+    </div>
+
+    <!-- Add FAB -->
+    <button id="add-homework-btn" class="fixed bottom-8 right-8 bg-cyan-500 hover:bg-cyan-600 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg transition transform hover:scale-110">
+      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+    </button>
+  </div>
+
+  <!-- Modals -->
+  <!-- Add/Edit Homework -->
+  <div id="homework-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6">
+      <h2 id="modal-title" class="text-2xl font-bold mb-4">新增作業</h2>
+      <form id="homework-form">
+        <input type="hidden" id="homework-id" />
+        <div class="mb-4">
+          <label for="title" class="block text-sm font-medium text-gray-300 mb-1">作業標題</label>
+          <input type="text" id="title" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-cyan-500" required/>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <div>
+            <label for="assignmentDate" class="block text-sm font-medium text-gray-300 mb-1">作業日期</label>
+            <input type="date" id="assignmentDate" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-cyan-500" required/>
+          </div>
+          <div>
+            <label for="registrationDate" class="block text-sm font-medium text-gray-300 mb-1">登記日期</label>
+            <input type="date" id="registrationDate" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-cyan-500" required/>
+          </div>
+          <div>
+            <label for="dueDate" class="block text-sm font-medium text-gray-300 mb-1">截止日期</label>
+            <input type="date" id="dueDate" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-cyan-500" required/>
+          </div>
+        </div>
+        <div class="flex justify-end space-x-3">
+          <button type="button" id="cancel-homework" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition duration-300">取消</button>
+          <button type="submit" class="bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-2 px-4 rounded-md transition duration-300">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Student Report -->
+  <div id="student-report-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-lg p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 id="student-report-title" class="text-2xl font-bold">學生報告</h2>
+        <button type="button" class="text-gray-400 hover:text-white" onclick="closeModal('student-report-modal')">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div id="student-report-content" class="max-h-96 overflow-y-auto pr-2"></div>
+      <div class="flex justify-end mt-6 space-x-3">
+        <button type="button" onclick="closeModal('student-report-modal')" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition duration-300">關閉</button>
+        <button id="export-student-csv-btn" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md transition duration-300">匯出 CSV</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Overall Report -->
+  <div id="overall-report-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-xl p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-2xl font-bold">全體繳交狀況總覽</h2>
+        <button type="button" class="text-gray-400 hover:text-white" onclick="closeModal('overall-report-modal')">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div class="mb-4 p-4 bg-gray-900/50 rounded-lg">
+        <p class="text-sm text-gray-300 mb-2">請選擇要匯出的作業日期範圍：</p>
+        <div class="flex items-center space-x-4">
+          <div>
+            <label for="start-date" class="text-xs text-gray-400">開始日期</label>
+            <input type="date" id="start-date" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+          </div>
+          <div>
+            <label for="end-date" class="text-xs text-gray-400">結束日期</label>
+            <input type="date" id="end-date" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">若不選擇日期，將會匯出所有作業項目。</p>
+      </div>
+      <div class="flex justify-end mt-6 space-x-3">
+        <button type="button" onclick="closeModal('overall-report-modal')" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition duration-300">取消</button>
+        <button id="export-overall-csv-btn" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md transition duration-300">匯出總覽 CSV</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirm -->
+  <div id="delete-confirm-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6 text-center">
+      <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-900/50 mb-4">
+        <svg class="h-6 w-6 text-red-500" stroke="currentColor" fill="none" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+      </div>
+      <h3 class="text-lg font-medium text-white mb-2">確定要刪除嗎？</h3>
+      <p class="text-sm text-gray-400 mb-6">這個操作無法復原。</p>
+      <div class="flex justify-center space-x-4">
+        <button id="cancel-delete-btn" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-6 rounded-md transition duration-300">取消</button>
+        <button id="confirm-delete-btn" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-6 rounded-md transition duration-300">刪除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App Script -->
+  <script type="module">
+    // Firebase init (from <head>)
+    const { db } = await window.__firebaseInit();
+
+    // --- DOM ---
+    const homeworkList         = document.getElementById('homework-list');
+    const addHomeworkBtn       = document.getElementById('add-homework-btn');
+    const homeworkModal        = document.getElementById('homework-modal');
+    const homeworkForm         = document.getElementById('homework-form');
+    const cancelHomeworkBtn    = document.getElementById('cancel-homework');
+    const modalTitle           = document.getElementById('modal-title');
+    const noHomeworkMessage    = document.getElementById('no-homework-message');
+
+    const studentSelector      = document.getElementById('student-selector');
+    const studentReportModal   = document.getElementById('student-report-modal');
+    const studentReportTitle   = document.getElementById('student-report-title');
+    const studentReportContent = document.getElementById('student-report-content');
+    const exportStudentCsvBtn  = document.getElementById('export-student-csv-btn');
+
+    const showOverallReportBtn = document.getElementById('show-overall-report-btn');
+    const overallReportModal   = document.getElementById('overall-report-modal');
+    const exportOverallCsvBtn  = document.getElementById('export-overall-csv-btn');
+
+    const deleteConfirmModal   = document.getElementById('delete-confirm-modal');
+    const cancelDeleteBtn      = document.getElementById('cancel-delete-btn');
+    const confirmDeleteBtn     = document.getElementById('confirm-delete-btn');
+
+    // --- State (Firestore-backed) ---
+    let homeworks = [];
+    const studentIds = [1,2,3,5,6,7,8,9,10,11,12,21,22,23,24,25,26,27,28,29,30,31];
+    let studentToExport = null;
+    let homeworkToDelete = null;
+
+    // Class / semester key (change to separate classes)
+    const CLASS_DOC_ID = "502_114-1";
+
+    // --- Helpers ---
+    const openModal  = (id) => document.getElementById(id).classList.remove('hidden');
+    const closeModal = (id) => document.getElementById(id).classList.add('hidden');
+
+    const getStatusText = (status) => ({
+      pending: '待繳交',
+      submitted: '準時繳交',
+      overdue: '逾期未交',
+      late_submitted: '補交'
+    }[status] || '未知');
+
+    const getStatusColor = (status) => ({
+      pending: 'bg-yellow-500 hover:bg-yellow-600',
+      submitted: 'bg-green-500 hover:bg-green-600',
+      overdue: 'bg-red-500 hover:bg-red-600',
+      late_submitted: 'bg-blue-500 hover:bg-blue-600'
+    }[status] || 'bg-gray-500');
+
+    const downloadCSV = (csvContent, filename) => {
+      const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.href = url; link.download = filename; link.style.visibility = 'hidden';
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    };
+
+    const checkOverdueStatus = () => {
+      const today = new Date(); today.setHours(0,0,0,0);
+      homeworks.forEach(hw => {
+        const due = new Date(hw.dueDate);
+        if (today > due) {
+          studentIds.forEach(sid => {
+            if (hw.submissions[sid] === 'pending') hw.submissions[sid] = 'overdue';
+          });
+        }
+      });
+    };
+
+    // --- Rendering ---
+    const render = () => {
+      checkOverdueStatus();
+      homeworkList.innerHTML = '';
+
+      if (homeworks.length === 0) {
+        noHomeworkMessage.classList.remove('hidden');
+      } else {
+        noHomeworkMessage.classList.add('hidden');
+      }
+
+      homeworks.sort((a,b) => new Date(b.dueDate) - new Date(a.dueDate));
+
+      homeworks.forEach(hw => {
+        const card = document.createElement('div');
+        card.className = 'bg-gray-800 rounded-lg shadow-lg p-5 flex flex-col';
+        card.innerHTML = `
+          <div class="flex-grow flex flex-col">
+            <div class="flex justify-between items-start mb-3">
+              <h3 class="text-xl font-bold text-cyan-300 pr-2">${hw.title}</h3>
+              <div class="flex space-x-2 flex-shrink-0">
+                <button data-id="${hw.id}" class="edit-btn text-gray-400 hover:text-white transition">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L16.732 3.732z"></path></svg>
+                </button>
+                <button data-id="${hw.id}" class="delete-btn text-gray-400 hover:text-red-500 transition">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                </button>
+              </div>
+            </div>
+            <div class="text-xs text-gray-400 space-y-1 mb-4">
+              <p>作業日期: ${hw.assignmentDate}</p>
+              <p>登記日期: ${hw.registrationDate}</p>
+              <p>截止日期: <span class="font-semibold text-amber-300">${hw.dueDate}</span></p>
+            </div>
+            <div class="grid grid-cols-6 gap-2 text-center mb-4 flex-grow">
+              ${studentIds.map(sid => `
+                <div class="flex flex-col items-center">
+                  <span class="text-xs text-gray-300 mb-1">${sid}</span>
+                  <button data-hw-id="${hw.id}" data-sid="${sid}"
+                          class="student-dot w-6 h-6 rounded-full transition duration-200 ${getStatusColor(hw.submissions[sid])}">
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+            <div class="border-t border-gray-700 mt-auto pt-3 text-right">
+              <button data-id="${hw.id}" class="manual-due-btn bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold py-1 px-3 rounded-md transition duration-300">
+                手動截止
+              </button>
+            </div>
+          </div>`;
+        homeworkList.appendChild(card);
+      });
+
+      bindCardEvents();
+    };
+
+    const bindCardEvents = () => {
+      document.querySelectorAll('.edit-btn')       .forEach(btn => btn.addEventListener('click', handleEdit));
+      document.querySelectorAll('.delete-btn')     .forEach(btn => btn.addEventListener('click', handleDelete));
+      document.querySelectorAll('.student-dot')    .forEach(dot => dot.addEventListener('click', handleDotClick));
+      document.querySelectorAll('.manual-due-btn') .forEach(btn => btn.addEventListener('click', handleManualDueDate));
+    };
+
+    // --- Firestore Save ---
+    const saveState = async () => {
+      const ref = firebase.firestoreDocRef || null; // we’ll attach this in init()
+      if (!ref) return;
+      await setDoc(ref, { homeworks }, { merge: false });
+    };
+
+    // --- Handlers ---
+    const handleAdd = () => {
+      modalTitle.textContent = '新增作業';
+      homeworkForm.reset();
+      document.getElementById('homework-id').value = '';
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('assignmentDate').value = today;
+      document.getElementById('registrationDate').value = today;
+      document.getElementById('dueDate').value = today;
+      openModal('homework-modal');
+    };
+
+    const handleEdit = (e) => {
+      const id = e.currentTarget.dataset.id;
+      const hw = homeworks.find(h => h.id === id);
+      if (!hw) return;
+      modalTitle.textContent = '編輯作業';
+      document.getElementById('homework-id').value      = hw.id;
+      document.getElementById('title').value            = hw.title;
+      document.getElementById('assignmentDate').value   = hw.assignmentDate;
+      document.getElementById('registrationDate').value = hw.registrationDate;
+      document.getElementById('dueDate').value          = hw.dueDate;
+      openModal('homework-modal');
+    };
+
+    const handleDelete = (e) => {
+      homeworkToDelete = e.currentTarget.dataset.id;
+      openModal('delete-confirm-modal');
+    };
+
+    const confirmDelete = async () => {
+      homeworks = homeworks.filter(h => h.id !== homeworkToDelete);
+      homeworkToDelete = null;
+      await saveState();
+      render();
+      closeModal('delete-confirm-modal');
+    };
+
+    const handleSave = async (e) => {
+      e.preventDefault();
+      const id               = document.getElementById('homework-id').value;
+      const title            = document.getElementById('title').value.trim();
+      const assignmentDate   = document.getElementById('assignmentDate').value;
+      const registrationDate = document.getElementById('registrationDate').value;
+      const dueDate          = document.getElementById('dueDate').value;
+
+      if (!title) return;
+
+      if (id) {
+        const idx = homeworks.findIndex(h => h.id === id);
+        if (idx > -1) {
+          homeworks[idx] = { ...homeworks[idx], title, assignmentDate, registrationDate, dueDate };
+        }
+      } else {
+        const submissions = {};
+        studentIds.forEach(sid => submissions[sid] = 'pending');
+        homeworks.push({
+          id: Date.now().toString(),
+          title, assignmentDate, registrationDate, dueDate, submissions
+        });
+      }
+      await saveState();
+      render();
+      closeModal('homework-modal');
+    };
+
+    const handleDotClick = async (e) => {
+      const { hwId, sid } = e.currentTarget.dataset;
+      const hw = homeworks.find(h => h.id === hwId);
+      if (!hw) return;
+
+      const current = hw.submissions[sid];
+      hw.submissions[sid] = ({
+        pending: 'submitted',
+        submitted: 'pending',
+        overdue: 'late_submitted',
+        late_submitted: 'overdue'
+      })[current] || 'pending';
+
+      await saveState();
+      render();
+    };
+
+    const handleManualDueDate = async (e) => {
+      const id = e.currentTarget.dataset.id;
+      const hw = homeworks.find(h => h.id === id);
+      if (!hw) return;
+      studentIds.forEach(sid => {
+        if (hw.submissions[sid] === 'pending') hw.submissions[sid] = 'overdue';
+      });
+      await saveState();
+      render();
+    };
+
+    const handleShowStudentReport = (e) => {
+      const studentId = e.target.value;
+      if (!studentId) return;
+      studentToExport = studentId;
+      studentReportTitle.textContent = `座號 ${studentId} 作業狀況總覽`;
+
+      let overdueItems = [];
+      let lateSubmittedItems = [];
+      homeworks.forEach(hw => {
+        const s = hw.submissions[studentId];
+        if (s === 'overdue')        overdueItems.push(hw);
+        else if (s === 'late_submitted') lateSubmittedItems.push(hw);
+      });
+
+      if (overdueItems.length === 0 && lateSubmittedItems.length === 0) {
+        studentReportContent.innerHTML = `<div class="text-center p-8"><p class="text-xl text-green-400 font-semibold">作業皆已繳交！</p></div>`;
+      } else {
+        let html = '';
+        if (overdueItems.length > 0) {
+          html += `<h4 class="text-lg font-semibold text-red-400 mb-2">逾期未交</h4>
+                   <ul class="list-disc list-inside space-y-1 mb-4">
+                     ${overdueItems.map(hw => `<li><span class="text-gray-400">${hw.assignmentDate}</span> - ${hw.title}</li>`).join('')}
+                   </ul>`;
+        }
+        if (lateSubmittedItems.length > 0) {
+          html += `<h4 class="text-lg font-semibold text-blue-400 mb-2">作業已補交</h4>
+                   <ul class="list-disc list-inside space-y-1">
+                     ${lateSubmittedItems.map(hw => `<li><span class="text-gray-400">${hw.assignmentDate}</span> - ${hw.title}</li>`).join('')}
+                   </ul>`;
+        }
+        studentReportContent.innerHTML = html;
+      }
+      openModal('student-report-modal');
+      studentSelector.value = '';
+    };
+
+    const handleExportStudentCSV = () => {
+      if (!studentToExport) return;
+      const sid = studentToExport;
+      const rows = ['作業標題,作業日期,截止日期,繳交狀態'];
+      homeworks.forEach(hw => {
+        const status = getStatusText(hw.submissions[sid]);
+        rows.push([hw.title.replace(/,/g,' '), hw.assignmentDate, hw.dueDate, status].join(','));
+      });
+      downloadCSV(rows.join('\n'), `student_${sid}_report.csv`);
+    };
+
+    const handleExportOverallCSV = () => {
+      const startDate = document.getElementById('start-date').value;
+      const endDate   = document.getElementById('end-date').value;
+
+      let filtered = homeworks;
+      if (startDate && endDate) {
+        const s = new Date(startDate), e = new Date(endDate);
+        filtered = homeworks.filter(hw => {
+          const d = new Date(hw.assignmentDate);
+          return d >= s && d <= e;
+        });
+      } else if (startDate) {
+        const s = new Date(startDate);
+        filtered = homeworks.filter(hw => new Date(hw.assignmentDate) >= s);
+      } else if (endDate) {
+        const e = new Date(endDate);
+        filtered = homeworks.filter(hw => new Date(hw.assignmentDate) <= e);
+      }
+
+      if (filtered.length === 0) {
+        alert('在選定的日期範圍內沒有作業可匯出。');
+        return;
+      }
+
+      const headers = ['作業標題','截止日期', ...studentIds];
+      const rows = [headers.join(',')];
+      filtered.forEach(hw => {
+        const row = [
+          hw.title.replace(/,/g,' '),
+          hw.dueDate,
+          ...studentIds.map(sid => getStatusText(hw.submissions[sid]))
+        ];
+        rows.push(row.join(','));
+      });
+      downloadCSV(rows.join('\n'), 'overall_homework_report.csv');
+      closeModal('overall-report-modal');
+    };
+
+    // --- Firestore live subscription + bootstrap ---
+    const init = async () => {
+      const { doc, onSnapshot, getDoc, setDoc } = await import("https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js");
+      const ref = doc(db, "classes", CLASS_DOC_ID);
+      window.firebase = window.firebase || {};
+      window.firebase.firestoreDocRef = ref;
+
+      // Create if missing
+      const snap = await getDoc(ref);
+      if (!snap.exists()) await setDoc(ref, { homeworks: [] });
+
+      // Subscribe
+      onSnapshot(ref, (dSnap) => {
+        const data = dSnap.data() || {};
+        homeworks = Array.isArray(data.homeworks) ? data.homeworks : [];
+        render();
+      });
+
+      // Bind static UI events once
+      addHomeworkBtn.addEventListener('click', handleAdd);
+      homeworkForm.addEventListener('submit', handleSave);
+      cancelHomeworkBtn.addEventListener('click', () => closeModal('homework-modal'));
+      studentSelector.addEventListener('change', handleShowStudentReport);
+      exportStudentCsvBtn.addEventListener('click', handleExportStudentCSV);
+      showOverallReportBtn.addEventListener('click', () => {
+        document.getElementById('start-date').value = '';
+        document.getElementById('end-date').value = '';
+        openModal('overall-report-modal');
+      });
+      exportOverallCsvBtn.addEventListener('click', handleExportOverallCSV);
+      cancelDeleteBtn.addEventListener('click', () => closeModal('delete-confirm-modal'));
+      confirmDeleteBtn.addEventListener('click', confirmDelete);
+
+      // Fill student selector
+      studentIds.forEach(id => {
+        const opt = document.createElement('option');
+        opt.value = id; opt.textContent = `座號 ${id}`;
+        studentSelector.appendChild(opt);
+      });
+    };
+
+    init();
+  </script>
+</body>
+</html>
